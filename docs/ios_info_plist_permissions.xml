@@ -1,0 +1,3 @@
+<!-- Paste these DIRECTLY INSIDE the <dict> element of ios/Runner/Info.plist. -->
+<key>NSLocationWhenInUseUsageDescription</key>
+<string>VéloSafe uses your location to show nearby reports and calculate cycling routes.</string>
