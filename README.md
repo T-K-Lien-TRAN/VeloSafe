@@ -98,7 +98,6 @@ flutter test
 ```
 
 Tests cover the Safety Score, date/status filtering, and proximity to route.
-**Verification note:** I checked the source structure, internal imports, and code delimiters, but I couldn't compile or execute Flutter tests in this environment because the Flutter SDK isn't installed here. A successful build on your machine still needs to be confirmed.
 
 The implementation follows the published APIs of [MapLibre Flutter](https://pub.dev/packages/maplibre_gl), [Geolocator](https://pub.dev/packages/geolocator), and [Supabase Flutter](https://supabase.com/docs/guides/getting-started/quickstarts/flutter).
 
@@ -152,7 +151,7 @@ velosafe/
 └── pubspec.yaml
 
 
-### What is implemented?
+### 9. What is implemented?
 
 | Feature | Implementation |
 |---|---|
@@ -166,3 +165,178 @@ velosafe/
 | Safer route selection | Compare available routes using report-based scores |
 | Bottom navigation | Map, Zones, Routes |
 | Demo mode | Works without Supabase or routing API credentials |
+
+### 10. API keys:
+
+For **VéloSafe Flutter application**, we need two API keys
+
+1. **`SUPABASE_PUBLISHABLE_KEY`** — Connects VéloSafe to the Supabase database to save and retrieve hazard reports.
+2. **`ORS_API_KEY`** — Connects VéloSafe to OpenRouteService to calculate real bicycle routes.
+
+Both services offer free options for development.
+
+## 1. Get SUPABASE_PUBLISHABLE_KEY
+
+**Official website:** https://supabase.com/dashboard
+
+### Step 1 — Create a Supabase account
+
+1. Open https://supabase.com/dashboard.
+2. Click **Sign in** or **Start your project**.
+3. Sign in with GitHub or your email.
+4. Click **New project**.
+5. Enter:
+   - Project name: `VeloSafe`
+   - Database password: Choose a strong password.
+   - Region: Choose a nearby European region.
+6. Click **Create new project**.
+
+### Step 2 — Find your API key
+
+Once your project is ready:
+
+1. Open your VéloSafe project.
+2. Go to **Project Settings → API Keys**.
+3. Find **Publishable key**.
+4. Copy the key.
+
+It looks like:
+
+```text
+sb_publishable_xxxxxxxxxxxxxxxxxxxxx
+```
+
+If your project has only legacy keys, you may need to create the new publishable key first.
+
+### Step 3 — Find SUPABASE_URL
+
+In your Supabase project, click **Connect** to find your project URL.
+
+It looks like:
+
+```text
+https://abcdefghijk.supabase.co
+```
+
+You now have:
+
+```bash
+SUPABASE_URL=https://abcdefghijk.supabase.co
+SUPABASE_PUBLISHABLE_KEY=sb_publishable_xxxxxxxxx
+```
+
+**Important:** Use the publishable key, not the `secret` or `service_role` key. Enable Row Level Security (RLS) on your database tables.
+
+Source: [Supabase — API Keys documentation](https://supabase.com/docs/guides/getting-started/api-keys).
+
+---
+
+## 2. Get ORS_API_KEY (OpenRouteService)
+
+**Official website:** https://openrouteservice.org/
+
+### Step 1 — Create an account
+
+1. Visit https://openrouteservice.org/.
+2. Click **Sign Up**.
+3. Register an account.
+4. Confirm your email address if requested.
+5. Log in.
+
+### Step 2 — Find your API key
+
+Open:
+
+https://openrouteservice.org/dev/
+
+In the developer dashboard:
+
+1. Open the **API Key** section.
+2. Find **Basic Key**.
+3. Click **Copy**.
+
+Since the 2025 account-system migration, the dashboard normally provides a Basic Key automatically. You generally do not need to create a separate token.
+
+Source: [OpenRouteService — API key system update, March 17, 2025](https://ask.openrouteservice.org/t/new-ors-account-site/7115).
+
+### Step 3 — Use the key
+
+Your ORS key may look like a long JWT-style token beginning with `eyJ`. This is normal for keys issued under the newer account system.
+
+You now have:
+
+```bash
+ORS_API_KEY=YOUR_OPENROUTESERVICE_KEY
+```
+
+Source: [OpenRouteService — Official API FAQ](https://giscience.github.io/openrouteservice/v9.10.0/frequently-asked-questions).
+
+---
+
+## 3. Run VéloSafe with both keys
+
+Open your Ubuntu terminal:
+
+```bash
+cd velosafe
+```
+
+Run:
+
+```bash
+flutter run -d chrome \
+  --dart-define=SUPABASE_URL=https://YOUR_PROJECT.supabase.co \
+  --dart-define=SUPABASE_PUBLISHABLE_KEY=YOUR_PUBLISHABLE_KEY \
+  --dart-define=ORS_API_KEY=YOUR_ORS_API_KEY
+```
+
+Replace all three placeholders with your actual values.
+
+### Example
+
+```bash
+flutter run -d chrome \
+  --dart-define=SUPABASE_URL=https://abcdefghijk.supabase.co \
+  --dart-define=SUPABASE_PUBLISHABLE_KEY=sb_publishable_example123 \
+  --dart-define=ORS_API_KEY=example_ors_key
+```
+
+These values are examples, not valid credentials.
+
+**Security warning:** This method is suitable only for local ORS testing. Flutter's `--dart-define` does not securely hide secrets in compiled web or mobile applications. OpenRouteService explicitly recommends making API requests through your backend so that your personal key is not exposed.
+
+For a publicly distributed VéloSafe application, move OpenRouteService calls into a Supabase Edge Function or FastAPI backend.
+
+---
+
+## 4. What happens after connecting the keys?
+
+| VéloSafe functionality | API required |
+|---|---|
+| Display OpenFreeMap | No API key |
+| Display current GPS location | No API key |
+| Search origin address | No API key with your current Photon implementation |
+| Search destination address | No API key with your current Photon implementation |
+| Calculate real bicycle routes | ORS API key |
+| Save hazard reports online | Supabase project |
+| Retrieve reported hazards | Supabase project |
+| Calculate Safety Score | Dart algorithm + hazard data |
+| Compare alternative routes | ORS API + Safety Score algorithm |
+
+Remember that Supabase also needs the database schema and access policies configured before the online reporting features will work.
+
+### My recommendation
+
+Start by creating both accounts and obtaining the three configuration values:
+
+```text
+SUPABASE_URL
+SUPABASE_PUBLISHABLE_KEY
+ORS_API_KEY
+```
+
+Then configure the Supabase database and test the routing API.
+
+**Do not share your actual ORS API key or Supabase secret keys in this chat or commit them to GitHub.**
+
+
