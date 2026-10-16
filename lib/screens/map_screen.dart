@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:geolocator/geolocator.dart';
 import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart';
 
@@ -34,6 +37,13 @@ class _MapScreenState extends State<MapScreen> {
 
   MapLibreMapController? _controller;
   LatLng? _userLocation;
+  StreamSubscription<Position>? _positionSubscription;
+  double? _accuracyMeters;
+  DateTime? _gpsTimestamp;
+  bool _gpsIsMocked = false;
+  bool _followUser = true;
+  bool _tracking = false;
+  bool _locating = false;
   bool _styleLoaded = false;
   bool _showHazards = true;
   bool _isDrawing = false;
@@ -45,11 +55,12 @@ class _MapScreenState extends State<MapScreen> {
   void initState() {
     super.initState();
     widget.service.addListener(_onReportsChanged);
-    _locate();
+    _startTracking();
   }
 
   @override
   void dispose() {
+    _positionSubscription?.cancel();
     widget.service.removeListener(_onReportsChanged);
     super.dispose();
   }
@@ -60,27 +71,108 @@ class _MapScreenState extends State<MapScreen> {
     _renderMarkers();
   }
 
-  Future<void> _locate() async {
+  Future<void> _startTracking() async {
+    if (_tracking || _locating) return;
+    _locating = true;
+    if (mounted) setState(() => _locationMessage = 'Locating…');
     try {
-      final position = await _locationService.currentPosition();
+      await _locationService.ensurePermission();
       if (!mounted) return;
-      setState(() {
-        _userLocation = position;
-        _locationMessage = null;
-      });
-      await _controller?.animateCamera(
-        CameraUpdate.newLatLngZoom(position, 15),
+      // Subscribe first, then request an initial fix: this avoids losing live
+      // movement updates while waiting for the initial position.
+      await _positionSubscription?.cancel();
+      _positionSubscription = _locationService.positionStream().listen(
+        _onPosition,
+        onError: (Object error) {
+          if (!mounted) return;
+          setState(() {
+            _tracking = false;
+            _locationMessage = 'Location updates stopped: $error';
+          });
+        },
       );
-      _renderMarkers();
+      _tracking = true;
+      try {
+        final initial = await Geolocator.getCurrentPosition(
+          locationSettings: const LocationSettings(
+            accuracy: LocationAccuracy.high,
+            timeLimit: Duration(seconds: 15),
+          ),
+        );
+        _onPosition(initial);
+      } catch (error) {
+        if (mounted && _userLocation == null) {
+          setState(() => _locationMessage =
+              'Waiting for a GPS fix ($error). The map is showing Nice as a sample.');
+        }
+      }
+    } catch (error) {
+      if (mounted) {
+        setState(() {
+          _tracking = false;
+          _locationMessage = '$error';
+        });
+      }
+    } finally {
+      _locating = false;
+    }
+  }
+
+  void _onPosition(Position position) {
+    if (!mounted) return;
+    final point = LatLng(position.latitude, position.longitude);
+    setState(() {
+      _userLocation = point;
+      _accuracyMeters = position.accuracy;
+      _gpsTimestamp = position.timestamp;
+      _gpsIsMocked = position.isMocked;
+      _locationMessage = null;
+    });
+    debugPrint('VéloSafe provider coordinates: ${position.latitude}, '
+        '${position.longitude}; estimated accuracy ±${position.accuracy.toStringAsFixed(0)} m; '
+        'timestamp: ${position.timestamp}; mocked: ${position.isMocked}');
+    _centerOnUser();
+    _renderMarkers();
+  }
+
+  Future<void> _centerOnUser({bool force = false}) async {
+    if ((!_followUser && !force) || !_styleLoaded || _userLocation == null) {
+      return;
+    }
+    final controller = _controller;
+    if (controller == null) return;
+    try {
+      await controller.animateCamera(
+        CameraUpdate.newLatLngZoom(_userLocation!, 16),
+      );
+    } catch (error) {
+      debugPrint('Map camera update failed: $error');
+    }
+  }
+
+  Future<void> _locate() async {
+    setState(() => _followUser = true);
+    // Refresh the fix, rather than just centering on old cached coordinates.
+    try {
+      final fresh = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.best,
+          timeLimit: Duration(seconds: 20),
+        ),
+      );
+      if (!mounted) return;
+      _onPosition(fresh);
     } catch (error) {
       if (!mounted) return;
-      setState(() => _locationMessage = '$error');
+      setState(() => _locationMessage = 'Refresh failed: $error');
+      if (!_tracking) await _startTracking();
     }
   }
 
   void _mapCreated(MapLibreMapController controller) {
     _controller = controller;
     controller.onCircleTapped.add(_onCircleTapped);
+    // Camera centering is deferred until the map style has loaded.
   }
 
   void _onCircleTapped(Circle circle) {
@@ -158,6 +250,7 @@ class _MapScreenState extends State<MapScreen> {
           onMapCreated: _mapCreated,
           onStyleLoadedCallback: () {
             _styleLoaded = true;
+            _centerOnUser();
             _renderMarkers();
           },
           compassEnabled: false,
@@ -212,6 +305,46 @@ class _MapScreenState extends State<MapScreen> {
                       const DemoNotice(text: 'DEMO data'),
                   ],
                 ),
+                Material(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _userLocation == null
+                              ? 'No device location • Nice is a DEMO map, not your position'
+                              : (_accuracyMeters ?? double.infinity) > 100
+                                  ? 'Approximate location (±${_accuracyMeters!.toStringAsFixed(0)} m) • not reliable for cycling'
+                                  : 'Device location (±${_accuracyMeters?.toStringAsFixed(0) ?? '?'} m) • ${_followUser ? 'following' : 'follow paused'}',
+                          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600),
+                        ),
+                        if (_userLocation != null) ...[
+                          const SizedBox(height: 3),
+                          SelectableText(
+                            'Coordinates from device/browser: '
+                            '${_userLocation!.latitude.toStringAsFixed(6)}, '
+                            '${_userLocation!.longitude.toStringAsFixed(6)}',
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          Text(
+                            'Fix: ${_gpsTimestamp?.toLocal().toString() ?? 'unknown'}'
+                            '${_gpsIsMocked ? ' • MOCK LOCATION' : ''}',
+                            style: const TextStyle(fontSize: 10),
+                          ),
+                          if ((_accuracyMeters ?? 0) > 100)
+                            const Text(
+                              'Chrome on a laptop may use Wi-Fi/IP instead of GPS. '
+                              'Try a phone with Location/Precise location enabled.',
+                              style: TextStyle(fontSize: 11, color: Colors.deepOrange),
+                            ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
                 if (_locationMessage != null)
                   Material(
                     color: Colors.white,
@@ -237,7 +370,7 @@ class _MapScreenState extends State<MapScreen> {
           child: FloatingActionButton.small(
             backgroundColor: Colors.white,
             onPressed: _locate,
-            tooltip: 'Center on GPS',
+            tooltip: 'Center on GPS and follow live location',
             child: const Icon(Icons.my_location, color: veloGreen),
           ),
         ),

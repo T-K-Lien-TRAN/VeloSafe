@@ -1,4 +1,5 @@
--- Run in a new Supabase project's SQL editor.
+-- Run in the Supabase SQL Editor. Safe to re-run for this schema.
+begin;
 -- Enable Authentication > Providers > Anonymous sign-ins in the dashboard.
 -- The mobile app uses the PUBLISHABLE key, never the service_role key.
 
@@ -31,22 +32,35 @@ alter table public.hazards enable row level security;
 alter table public.hazard_confirmations enable row level security;
 
 -- Signed-in anonymous users also receive the 'authenticated' database role.
+drop policy if exists "hazards_read_authenticated" on public.hazards;
 create policy "hazards_read_authenticated"
   on public.hazards for select to authenticated using (true);
 
+drop policy if exists "hazards_insert_as_self" on public.hazards;
 create policy "hazards_insert_as_self"
   on public.hazards for insert to authenticated
   with check (reporter_id = (select auth.uid())
     and status = 'active' and confirmations_count = 0);
 
--- A reporter may only change the status field, not forge the confirmation count.
-revoke update on public.hazards from authenticated;
+-- Explicit least-privilege grants: timestamps, IDs, owner and counts are server-owned.
+revoke all on public.hazards from anon, authenticated;
+revoke insert (id, reporter_id, category, severity, latitude, longitude,
+  description, status, confirmations_count, created_at)
+  on public.hazards from anon, authenticated;
+revoke update (id, reporter_id, category, severity, latitude, longitude,
+  description, status, confirmations_count, created_at)
+  on public.hazards from anon, authenticated;
+grant select on public.hazards to authenticated;
+grant insert (category, severity, latitude, longitude, description)
+  on public.hazards to authenticated;
 grant update (status) on public.hazards to authenticated;
+revoke all on public.hazard_confirmations from anon, authenticated;
 
+drop policy if exists "hazards_update_owned" on public.hazards;
 create policy "hazards_update_owned"
   on public.hazards for update to authenticated
   using (reporter_id = (select auth.uid()))
-  with check (reporter_id = (select auth.uid()));
+  with check (reporter_id = (select auth.uid()) and status = 'resolved');
 
 -- No direct table access is provided to hazard_confirmations.
 -- A controlled SQL function below performs a confirmation once per user.
@@ -63,10 +77,10 @@ begin
     raise exception 'Authentication required';
   end if;
 
-  if not exists (
-    select 1 from public.hazards
-    where id = p_hazard_id and status = 'active'
-  ) then
+  -- Serialize confirmations and resolution on the same hazard row.
+  perform 1 from public.hazards
+    where id = p_hazard_id and status = 'active' for update;
+  if not found then
     raise exception 'Hazard does not exist or has been resolved';
   end if;
 
@@ -86,5 +100,18 @@ $$;
 revoke all on function public.confirm_hazard(uuid) from public;
 grant execute on function public.confirm_hazard(uuid) to authenticated;
 
--- Run ONCE (or toggle Realtime replication for hazards in the dashboard):
--- alter publication supabase_realtime add table public.hazards;
+-- Enable events once; rerunning this script does not add duplicate members.
+do $$
+begin
+  if exists (select 1 from pg_publication where pubname = 'supabase_realtime')
+    and not exists (
+      select 1 from pg_publication_tables
+      where pubname = 'supabase_realtime'
+        and schemaname = 'public' and tablename = 'hazards'
+    ) then
+    alter publication supabase_realtime add table public.hazards;
+  end if;
+end;
+$$;
+
+commit;

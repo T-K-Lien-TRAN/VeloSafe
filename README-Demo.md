@@ -199,6 +199,7 @@ Once your project is ready:
 2. Go to **Project Settings → API Keys**.
 3. Find **Publishable key**.
 4. Copy the key.
+sb_publishable_D98jvRorwB_lpIAq95NVjA_oqfBtAju
 
 It looks like:
 
@@ -339,4 +340,11 @@ Then configure the Supabase database and test the routing API.
 
 **Do not share your actual ORS API key or Supabase secret keys in this chat or commit them to GitHub.**
 
+SUPABASE_URL=https://amezplykyvilegsicxlk.supabase.co
+SUPABASE_PUBLISHABLE_KEY=sb_publishable_D98jvRorwB_lpIAq95NVjA_oqfBtAju
+ORS_API_KEY=eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjkyYWRkNjZhZTdhYzQ3ODE4MjBhMWE2N2Q1YjI1YjZkIiwiaCI6Im11cm11cjY0In0=
 
+flutter run -d chrome \
+  --dart-define=SUPABASE_URL=https://amezplykyvilegsicxlk.supabase.co \
+  --dart-define=SUPABASE_PUBLISHABLE_KEY=sb_publishable_D98jvRorwB_lpIAq95NVjA_oqfBtAju \
+  --dart-define=ORS_API_KEY==eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjkyYWRkNjZhZTdhYzQ3ODE4MjBhMWE2N2Q1YjI1YjZkIiwiaCI6Im11cm11cjY0In0=

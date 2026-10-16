@@ -6,18 +6,7 @@ class LocationService {
   static const LatLng demoCenter = LatLng(43.7102, 7.2620);
 
   Future<LatLng> currentPosition() async {
-    if (!await Geolocator.isLocationServiceEnabled()) {
-      throw StateError('Location services are disabled.');
-    }
-
-    var permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
-    if (permission == LocationPermission.denied ||
-        permission == LocationPermission.deniedForever) {
-      throw StateError('Location permission has not been granted.');
-    }
+    await ensurePermission();
 
     final position = await Geolocator.getCurrentPosition(
       locationSettings: const LocationSettings(
@@ -26,6 +15,29 @@ class LocationService {
       ),
     );
     return LatLng(position.latitude, position.longitude);
+  }
+
+  /// Live location updates. The browser/device determines the achievable
+  /// accuracy; high accuracy is a request, not a guarantee.
+  Stream<Position> positionStream() => Geolocator.getPositionStream(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          distanceFilter: 5,
+        ),
+      );
+
+  Future<void> ensurePermission() async {
+    if (!await Geolocator.isLocationServiceEnabled()) {
+      throw StateError('Location services are disabled. Enable location in device settings.');
+    }
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.denied ||
+        permission == LocationPermission.deniedForever) {
+      throw StateError('Location access denied. Allow it in browser/app settings.');
+    }
   }
 
   static double distanceMeters(LatLng a, LatLng b) =>

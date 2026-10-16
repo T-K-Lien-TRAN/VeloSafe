@@ -11,13 +11,15 @@ class HazardService extends ChangeNotifier {
     if (client == null) {
       _hazards = _sampleHazards();
     } else {
+      _pollTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+        unawaited(refresh());
+      });
       _subscription = client.from('hazards').stream(primaryKey: ['id']).listen(
         (rows) {
-          _hazards = rows.map(Hazard.fromJson).toList();
-          error = null;
-          notifyListeners();
+          if (!_disposed) _acceptRows(rows);
         },
         onError: (Object exception) {
+          if (_disposed) return;
           error = 'Cannot load hazard reports: $exception';
           notifyListeners();
         },
@@ -27,6 +29,9 @@ class HazardService extends ChangeNotifier {
 
   final SupabaseClient? _client;
   StreamSubscription<List<Map<String, dynamic>>>? _subscription;
+  Timer? _pollTimer;
+  bool _disposed = false;
+  bool _refreshing = false;
   List<Hazard> _hazards = [];
   String? error;
 
@@ -37,6 +42,31 @@ class HazardService extends ChangeNotifier {
       if (hazard.id == id) return hazard;
     }
     return null;
+  }
+
+  void _acceptRows(List<Map<String, dynamic>> rows) {
+    _hazards = rows.map(Hazard.fromJson).toList()
+      ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    error = null;
+    notifyListeners();
+  }
+
+  // Polling also recovers after a missed event or disabled Realtime replication.
+  Future<void> refresh() async {
+    if (_client == null || _disposed || _refreshing) return;
+    _refreshing = true;
+    try {
+      final rows = await _client.from('hazards').select()
+          .order('created_at', ascending: false);
+      if (!_disposed) _acceptRows(rows);
+    } catch (exception) {
+      if (!_disposed) {
+        error = 'Cannot refresh reports. Check your connection and database setup.';
+        notifyListeners();
+      }
+    } finally {
+      _refreshing = false;
+    }
   }
 
   bool canResolve(Hazard hazard) => isDemoMode ||
@@ -64,8 +94,13 @@ class HazardService extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    await _client!.from('hazards').insert(newHazard.toInsertJson());
-    // Supabase Realtime stream will deliver the inserted row.
+    final row = await _client!.from('hazards')
+        .insert(newHazard.toInsertJson()).select().single();
+    if (_disposed) return;
+    final saved = Hazard.fromJson(row);
+    _hazards = [saved, ..._hazards.where((hazard) => hazard.id != saved.id)];
+    error = null;
+    notifyListeners();
   }
 
   Future<void> confirm(String id) async {
@@ -76,6 +111,7 @@ class HazardService extends ChangeNotifier {
       return;
     }
     await _client!.rpc('confirm_hazard', params: {'p_hazard_id': id});
+    await _reloadHazard(id);
   }
 
   Future<void> resolve(String id) async {
@@ -88,10 +124,18 @@ class HazardService extends ChangeNotifier {
       _replace(hazard.copyWith(status: 'resolved'));
       return;
     }
-    await _client!
+    final row = await _client!
         .from('hazards')
         .update({'status': 'resolved'})
-        .eq('id', id);
+        .eq('id', id)
+        .select()
+        .single();
+    if (!_disposed) _replace(Hazard.fromJson(row));
+  }
+
+  Future<void> _reloadHazard(String id) async {
+    final row = await _client!.from('hazards').select().eq('id', id).single();
+    if (!_disposed) _replace(Hazard.fromJson(row));
   }
 
   void _replace(Hazard changed) {
@@ -151,6 +195,8 @@ class HazardService extends ChangeNotifier {
 
   @override
   void dispose() {
+    _disposed = true;
+    _pollTimer?.cancel();
     _subscription?.cancel();
     super.dispose();
   }

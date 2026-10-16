@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 import 'package:maplibre_gl/maplibre_gl.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import '../models/bike_route.dart';
 import '../models/hazard.dart';
@@ -11,14 +12,12 @@ import 'safety_score_service.dart';
 class RoutingService {
   const RoutingService();
 
-  // For production, provide a backend URL and keep ORS_API_KEY on the server.
-  static const String _routingApiUrl =
-      String.fromEnvironment('ROUTING_API_URL');
+  static String get _routingApiUrl =>
+    dotenv.env['ROUTING_API_URL'] ?? '';
 
-  // Development only! dart-define values can be recovered from compiled apps.
-  static const String _developmentOrsKey =
-      String.fromEnvironment('ORS_API_KEY');
-
+  static String get _developmentOrsKey =>
+      dotenv.env['ORS_API_KEY'] ?? '';
+  
   bool get isConfigured =>
       _routingApiUrl.isNotEmpty || _developmentOrsKey.isNotEmpty;
 

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 
 import 'screens/hazard_details_screen.dart';
 import 'screens/map_screen.dart';
@@ -13,26 +14,41 @@ import 'widgets/hazard_marker.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  const supabaseUrl = String.fromEnvironment('SUPABASE_URL');
-  const supabaseKey = String.fromEnvironment('SUPABASE_PUBLISHABLE_KEY');
+  await dotenv.load(fileName: '.env');
+
+final supabaseUrl = dotenv.env['SUPABASE_URL'] ?? '';
+final supabaseKey = dotenv.env['SUPABASE_PUBLISHABLE_KEY'] ?? '';
+  const demoMode = bool.fromEnvironment('DEMO_MODE');
   SupabaseClient? client;
   try {
-    if (supabaseUrl.isNotEmpty && supabaseKey.isNotEmpty) {
+    if (demoMode) {
+      // Demo data is available only when deliberately requested.
+    } else if (supabaseUrl.isNotEmpty && supabaseKey.isNotEmpty) {
+      if (supabaseKey.startsWith('sb_secret_')) {
+        throw StateError('Use a publishable key, never a secret key.');
+      }
       await Supabase.initialize(url: supabaseUrl, publishableKey: supabaseKey);
       client = Supabase.instance.client;
       if (client.auth.currentUser == null) {
         // Turn on Anonymous Sign-ins in Supabase Authentication settings.
         await client.auth.signInAnonymously();
       }
-    } else if (supabaseUrl.isNotEmpty || supabaseKey.isNotEmpty) {
-      throw StateError('Provide BOTH SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY.');
+      // Fail visibly if the schema or read policy has not been installed.
+      await client.from('hazards').select('id').limit(1);
+    } else {
+      throw StateError('Start with python3 scripts/run.py -d chrome, or pass BOTH '
+          'SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY. '
+          'For sample data only, set DEMO_MODE=true.');
     }
   } catch (error) {
     runApp(MaterialApp(
       home: Scaffold(
         body: Center(child: Padding(
           padding: const EdgeInsets.all(24),
-          child: SelectableText('Supabase setup failed:\n$error'),
+          child: SelectableText('Supabase setup failed:\n$error\n\n'
+              'Check your connection, run sql/001_hazards.sql in the '
+              'Supabase SQL Editor, and enable Anonymous Sign-ins. '
+              'Then restart the app.'),
         )),
       ),
     ));
